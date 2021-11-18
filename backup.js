@@ -76,12 +76,18 @@ Pos.Dist = (pos1, pos2) => Math.abs(pos1.x - pos2.x) + Math.abs(pos1.y - pos2.y)
 
 class Map {
     constructor() {
-        this.items = {}
+        this.items = [];
     }
 
-    set = (pos, value) => this.items[`@${pos.x}_${pos.y}`] = value;
-    get = pos => this.items[`@${pos.x}_${pos.y}`];
-    free = pos => delete this.items[`@${pos.x}_${pos.y}`];
+    set = (from, to, value) => this.items.push({ from, to, value });
+    get = pos => {
+        for(const item of this.items) {
+            if(pos.IsWithin(item.from, item.to))
+                return item;
+        }
+    }
+
+    free = () => this.items = [];
 }
 
 class Texture extends Image {
@@ -158,7 +164,12 @@ class Rail extends Canvas {
         
         const segment = new Segment(type, pos);
         segment.rail = this;
-        this.segmentMap.set(pos, segment);
+
+        if(segment.type.orientation == 0)
+            this.segmentMap.set(pos, Pos.Add(pos, this.size), segment);
+        else
+            this.segmentMap.set(pos, Pos.Add(pos, this.size), segment);
+
         this.segments.push(segment);
     }
 
@@ -192,7 +203,8 @@ class Train {
         
         // if(this.pos == p)
         //     p = (new Pos(0, 0)).add(this.size).add(this.pos);
-        const segment = this.rail.segmentMap.get(Pos.Add(this.pos, new Pos(this.pos.width, this.pos.height)));
+        Pos.Add(this.pos, new Pos(Math.floor(this.pos.width * 0.5), Math.floor(this.pos.height * 0.5)));
+        const segment = this.rail.segmentMap.get(this.pos);
 
         if(segment)
             this.onSegment = segment;
@@ -269,13 +281,14 @@ function main() {
     rail.addSegment(Segment.straight);
     rail.addSegment(Segment.to_right_90_deg);
     rail.addSegment(Segment.straight_horizontal);
+    cw(rail.segmentMap);
     // rail.addSegment(Segment.straight);
 
     const train = new Train(new Size(150, 300), new Pos(0, 0));
     train.setRail(rail);
 
     const loop = () => {
-        train.move(1);
+        train.move(3);
         rail.clear();
         rail.render();
         train.render();
