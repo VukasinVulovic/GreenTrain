@@ -11,6 +11,13 @@ class Size {
         this.height += size.height;
         return this;
     }
+
+    invert() {
+        let h = this.height;
+        this.height = this.width;
+        this.width = h;
+        return this;
+    }
 }
 
 class Vector {
@@ -26,7 +33,35 @@ class Vector {
     }
 }
 
-class Pos extends Vector {}
+class Pos extends Vector {
+    constructor(x, y) {
+        super(x, y);
+    }
+
+    add(v) {
+        if(v instanceof Pos) {
+            this.x += v.x;
+            this.y += v.y;
+        } else if(v instanceof Size) {
+            this.x += v.width;
+            this.y += v.height;
+        } else {
+            throw new Error('value not instance of Pos or Size');
+        }
+
+        return this;
+    }
+}
+
+class Map {
+    constructor() {
+        this.items = {}
+    }
+
+    set = (pos, value) => this.items[`@${pos.x}_${pos.y}`] = value;
+    get = pos => this.items[`@${pos.x}_${pos.y}`];
+    free = pos => delete this.items[`@${pos.x}_${pos.y}`];
+}
 
 class Texture extends Image {
     constructor(src, size) {
@@ -83,20 +118,26 @@ class Rail extends Canvas {
         this.pos = new Pos(x, y);
         this.size = new Size(width, height);
         this.segments = [];
+        this.segmentMap = new Map();
     }
 
     addSegment(type) {
         let prev = this.segments[this.segments.length - 1];
-
+        let prev_prev = this.segments[this.segments.length - 2];
         let pos = new Pos(0, 0);
-
-        if(type.orientation == 0)
-            pos.add(new Pos(0, (prev?.pos?.y || 0) + (prev?.size?.height || 0)));
-        else 
-            pos.add(new Pos((prev?.pos?.x || 0) + (prev?.size?.width || 0), 0));
-
+        
+        if(prev) {
+            if(prev.type.orientation == 0)
+                pos.add(new Pos(0, prev.pos.y + prev.size.height));
+            else {
+                pos.add(new Pos(prev.pos.x + prev.size.width, 0));
+                pos.add(new Pos(0, prev_prev.pos.y + prev_prev.size.height));
+            }
+        }
+        
         const segment = new Segment(type, pos);
         segment.rail = this;
+        this.segmentMap.set(pos, segment);
         this.segments.push(segment);
     }
 
@@ -110,20 +151,41 @@ class Train {
     constructor(size, pos) {
         this.pos = pos;
         this.size = size;
+        this.inverted = false;
         this.rail = null;
-        this.texture = new Texture('./assets/textures/trains/old.png', size);
+        this.onSegment = null;
+        this.textures = {
+            vertical: new Texture('./assets/textures/trains/old.png', size),
+            horizontal: new Texture('./assets/textures/trains/old_verical_to_right.png', new Size(size.height, size.width))
+        }
+        
         this.orientation = 0;
     }
+    
+    //(new Pos(0, 0)).add(this.pos).add((new Size(0, 0)).add(this.size))
 
     setRail = rail => this.rail = rail;
 
     move(v, v2) {
+        // let p = new Pos(0, 0);
+        
+        // if(this.pos == p)
+        //     p = (new Pos(0, 0)).add(this.size).add(this.pos);
+        const segment = this.rail.segmentMap.get(this.pos);
+
+        if(segment)
+            this.onSegment = segment;
+
+        this.orientation = segment?.type?.orientation || this.orientation;
+
         ([
-            () => this.pos.add(new Vector(0, v)), //TO_BOTTOM
-            () => this.pos.add(new Vector(v, 0)), //TO_LEFT
-            () => this.pos.add(new Vector(v * -1, 0)), //TO_RIGHT
-            () => this.pos.add(new Vector(v, v2)), //TO_BOTTOM_LEFT
-            () => this.pos.add(new Vector(v * -1, v2 * -1)) //TO_BOTTOM_RIGHT
+            () => this.pos.add(new Pos(0, v)), //TO BOTTOM
+            () => this.pos.add(new Pos(v * -1, 0)), //TO LEFT
+            () => { //TO RIGHT
+                this.pos.add(new Pos(v * 1, 0));
+            }, 
+            () => this.pos.add(new Pos(v, v2)), //TO BOTTOM LEFT
+            () => this.pos.add(new Pos(v * -1, v2 * -1)) //TO BOTTOM RIGHT
         ][this.orientation])();
     }
 
@@ -131,7 +193,22 @@ class Train {
         if(!this.rail)
             throw new Error('Rail object not set.');
 
-        this.rail.drawTexture(this.texture, this.pos.x, this.pos.y, this.size.width, this.size.height);
+        const texture = this.orientation === 0 ? this.textures.vertical : this.textures.horizontal;
+        
+        if(this.orientation === 0 && !this.inverted) {
+        	this.inverted = true;
+        	this.size.invert();
+        	
+        	this.rail.drawTexture(texture, this.pos.x, this.pos.y, this.size.width, this.size.height);
+        } else {
+        	
+        	if(this.inverted && this.orientation !== 0) {
+        		this.size.invert();
+        		this.inverted = false;
+        	}
+        	
+        	this.rail.drawTexture(texture, this.pos.x, this.pos.y, this.size.height, this.size.width);
+        }
     }
 }
 
@@ -150,28 +227,34 @@ Segment.straight = {
     size: new Size(150, 300)
 }
 
+Segment.straight_horizontal = {
+    name: 'straight_horizontal',
+    texture: new Texture('./assets/textures/rail_segments/straight_horizontal.png'),
+    orientation: Train.Orientation.TO_RIGHT,
+    size: new Size(300, 150)
+}
+
 Segment.to_right_90_deg = {
     name: 'to_right_90_deg',
     texture: new Texture('./assets/textures/rail_segments/90_deg_to_right.png'),
     orientation: Train.Orientation.TO_RIGHT,
-    size: new Size(150, 100)
+    size: new Size(150, 150)
 }
 
 function main() {
-    const rail = new Rail(0, 0, 150, 1200);
+    const rail = new Rail(0, 0, 800, 1200);
     rail.setParent(document.body);
     
     rail.addSegment(Segment.straight);
     rail.addSegment(Segment.to_right_90_deg);
+    rail.addSegment(Segment.straight_horizontal);
     // rail.addSegment(Segment.straight);
-    // rail.addSegment(Segment.straight, 300);
-    // rail.addSegment(Segment.straight, 300);
 
     const train = new Train(new Size(150, 300), new Pos(0, 0));
     train.setRail(rail);
 
     const loop = () => {
-        train.move(1);
+        train.move(3);
         rail.clear();
         rail.render();
         train.render();
