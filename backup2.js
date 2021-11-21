@@ -121,6 +121,7 @@ class LinearMap {
     }
 
     set = (range, value) => this.items.push({ range, value });
+    
     get = range => this.items.filter(v => v.range.Overlaps(range)).map(v => v.value);
 
     // free = pos => delete this.items[`@${pos.x}_${pos.y}`];
@@ -161,15 +162,12 @@ class Canvas {
 
 const Orientation = {
     TO_BOTTOM: 1,
-    FROM_TOP_TO_RIGHT: 2,
-    FROM_LEFT_TO_RIGHT: 3,
-    FROM_LEFT_TO_TOP: 4,
-    TO_TOP: 5,
-    FROM_BOTTOM_TO_RIGHT: 6,
-    FROM_LEFT_TO_BOTTOM: 7,
-    FROM_TOP_TO_LEFT: 8,
-    FROM_RIGHT_TO_TOP: 9,
-    FROM_RIGHT_TO_LEFT: 10
+    TO_TOP: 2,
+    FROM_TOP_TO_RIGHT: 3,
+    FROM_LEFT_TO_RIGHT: 4,
+    FROM_LEFT_TO_BOTTOM: 5,
+    FROM_LEFT_TO_TOP: 6,
+    FROM_BOTTOM_TO_RIGHT: 7
 }
 
 class Segment {
@@ -205,54 +203,35 @@ class Rail extends Canvas {
         const segment = new Segment(type, pos); //create a new segment object
         segment.rail = this;
 
-        //THIS DOES NOT DEFINE THE POSITION OF THE SEGMENT, IT DEFINESTHE POSITION OF THE NEXT ONE!!!!!!!!!!!!!
         if(prev) { //if there is a previous segment
             //add to position
             switch(prev.orientation) {
-                case Orientation.TO_BOTTOM:
-                    pos.add(new Size(0, prev.size.height));
-                    break;
-    
-                case Orientation.FROM_TOP_TO_RIGHT:
-                    pos.add(new Size(prev.size.width, 0));
-                    break;
-        
-                case Orientation.FROM_LEFT_TO_RIGHT:
-                    pos.add(new Size(prev.size.width, 0));
-                    break;
-
-                case Orientation.FROM_LEFT_TO_TOP:
-                    pos.add(new Size(0, (prev.size.height + Math.abs(segment.size.height - prev.size.height))* -1)); //must account for top left positioning
-                    break;
-
-                case Orientation.TO_TOP:
-                    pos.add(new Size(0, segment.size.height * -1)); //must account for top left positioning
-                    break;
-
-                case Orientation.FROM_BOTTOM_TO_RIGHT:
-                    pos.add(new Size(prev.size.width, 0)); //must account for top left positioning
-                    break;
-
+                case Orientation.TO_BOTTOM: //add 0 to x and height of segment to y
                 case Orientation.FROM_LEFT_TO_BOTTOM:
                     pos.add(new Size(0, prev.size.height));
                     break;
 
-                case Orientation.FROM_TOP_TO_LEFT:
-                    pos.add(new Size((prev.size.width + Math.abs(segment.size.width - prev.size.width)) * -1, 0));
+                case Orientation.TO_TOP:
+                    pos.add(new Size(0, prev.size.height * -0.5));
                     break;
 
-                case Orientation.FROM_RIGHT_TO_TOP:
-                    pos.add(new Size(0, segment.size.height * -1));
+                case Orientation.FROM_LEFT_TO_TOP:
+                    pos.add(new Size(0, prev.size.height * -1));
+                    break;     
+
+                case Orientation.FROM_TOP_TO_RIGHT: //add width of segment to x and 0 to y
+                    pos.add(new Size(prev.size.width, 0));
                     break;
 
-                case Orientation.FROM_RIGHT_TO_LEFT:
-                    pos.add(new Size(segment.size.width * -1, 0)) //ok
+                case Orientation.FROM_BOTTOM_TO_RIGHT:
+                    pos.add(new Size(0, 0));
                     break;
 
                 default:
-                    throw new Error('Unknown orientation for segment: ' + prev.orientation);
+                    throw new Error('Unknown orientation: ' + segment.orientation);
             }
         }
+
 
         //add segment to array and map
         this.segmentMap.set(new Range(pos, Pos.Add(pos, segment.size)), segment);
@@ -277,7 +256,6 @@ class Train {
             old: {
                 vertical: new Texture('./assets/textures/trains/old.png', size),
                 horizontal_to_right: new Texture('./assets/textures/trains/old_horizontal_to_right.png', new Size(size.height, size.width)),
-                horizontal_from_left: new Texture('./assets/textures/trains/old_horizontal_from_left.png', new Size(size.height, size.width)),
                 vertical_to_top: new Texture('./assets/textures/trains/old_to_top.png', size)
             }
         }
@@ -293,56 +271,23 @@ class Train {
         if(this.rail?.segments[0])
             this.orientation = this.rail.segments[0].orientation;    
     }
+
+    invertSize() {
+        if(!this.size_inverted) {
+            this.size.invert();
+            this.size_inverted = true;
+        }
+    }
     
-    checkRotation() {
-        const rotate = () => { //rotate size if not
-            if(!this.size_inverted) { 
-                this.size.invert();
-                this.size_inverted = true;
-            }
-        }
-
-        const unrotate = () => { //un-rotate size if is
-            if(this.size_inverted) { 
-                this.size.invert();
-                this.size_inverted = false;
-            }
-        }
-
-        switch(this.onSegment.orientation) { //set paramaters for rotation
-            case Orientation.TO_BOTTOM:
-            case Orientation.FROM_LEFT_TO_BOTTOM:
-                unrotate();
-                this.texture = this.textures.old.vertical;
-                break;
-
-            case Orientation.FROM_TOP_TO_RIGHT:
-            case Orientation.FROM_BOTTOM_TO_RIGHT:
-            case Orientation.FROM_LEFT_TO_RIGHT:
-                rotate();
-                this.texture = this.textures.old.horizontal_to_right;
-                break;
-
-            case Orientation.TO_TOP:
-            case Orientation.FROM_LEFT_TO_TOP:
-            case Orientation.FROM_RIGHT_TO_TOP:
-                unrotate();
-                this.texture = this.textures.old.vertical_to_top;
-                break;
-
-            case Orientation.FROM_TOP_TO_LEFT:
-            case Orientation.FROM_RIGHT_TO_LEFT:
-                rotate();
-                this.texture = this.textures.old.horizontal_from_left;
-                break;
-
-            default:
-                throw new Error('Unknown orientation for rotation ' + this.onSegment.orientation);
+    resetSize() {
+        if(this.size_inverted) { 
+            this.size.invert();
+            this.size_inverted = false;
         }
     }
 
     move(v) {
-        let segment = this.rail.segmentMap.get(Pos.Add(this.pos, new Size(0, 0))); //(this.inverted ? this.size.width : this.size.height) * 0.3)
+        let segment = this.rail.segmentMap.get(this.pos);
         segment = segment.at(-1); //last segment from list
 
         if(segment) //if on segment, set this.onSegment
@@ -350,46 +295,39 @@ class Train {
 
         switch(this.onSegment.orientation) { //set paramaters for orientation
             case Orientation.TO_BOTTOM:
+            case Orientation.FROM_LEFT_TO_BOTTOM:
                 this.pos.add(new Pos(0, v));
-                break;
+                this.texture = this.textures.old.vertical;
+                this.resetSize(); //reset size if not already
+            break;
 
-            case Orientation.FROM_TOP_TO_RIGHT:
-                this.pos.add(new Size(v, 0));
-                break;
-
-            case Orientation.FROM_LEFT_TO_RIGHT:
-                this.pos.add(new Size(v, 0));
+            case Orientation.TO_TOP:
+                this.pos.add(new Pos(0, v * -1));
+                this.texture = this.textures.old.vertical_to_top;
+                this.resetSize(); //reset size if not already
                 break;
 
             case Orientation.FROM_LEFT_TO_TOP:
-                this.pos.add(new Size(0, v * -1));
+                this.pos.add(new Pos(0, v * -1));
+                this.texture = this.textures.old.vertical_to_top;
+                this.resetSize(); //reset size if not already
                 break;
 
-            case Orientation.TO_TOP:
-                // this.pos.add(new Pos(0, v * -1));
+            case Orientation.FROM_TOP_TO_RIGHT:
+                this.pos.add(new Pos(v, 0));
+                this.texture = this.textures.old.horizontal_to_right;
+                this.invertSize(); //invert size if not already
                 break;
 
             case Orientation.FROM_BOTTOM_TO_RIGHT:
-                this.pos.add(new Pos(v, 0));
+                    this.pos.add(new Pos(v, 0));
+                    this.texture = this.textures.old.horizontal_to_right;
+                    this.invertSize(); //invert size if not already
                 break;
 
-            case Orientation.FROM_LEFT_TO_BOTTOM:
-                this.pos.add(new Pos(0, v));
-                break;
 
-            case Orientation.FROM_TOP_TO_LEFT:
-                this.pos.add(new Pos(v * -1, 0));
-                break;
-
-            case Orientation.FROM_RIGHT_TO_TOP:
-                this.pos.add(new Pos(0, v * -1));
-                break;
-
-            case Orientation.FROM_RIGHT_TO_LEFT:
-                this.pos.add(new Pos(v * -1, 0));
-                break;
             default:
-                throw new Error('Unknown orientation for move ' + this.onSegment.orientation);
+                throw new Error('Unknown orientation ' + this.orientation);
         }
 
         this.ditanceTraveled += Math.sign(v); //add to distance
@@ -399,7 +337,6 @@ class Train {
         if(!this.rail)
             throw new Error('Rail object not set.');
 
-        this.checkRotation();
         this.rail.drawTexture(this.texture, this.pos.x, this.pos.y, this.size.width, this.size.height); //render train texture
     }
 }
@@ -408,35 +345,28 @@ Segment.Straight = {
     name: 'straight',
     texture: new Texture('./assets/textures/rail_segments/straight.png'),
     orientation: Orientation.TO_BOTTOM,
-    size: new Size(90, 130)
+    size: new Size(65, 130)
 }
 
 Segment.StraightToTop = {
-    name: 'straight to top',
+    name: 'straight',
     texture: new Texture('./assets/textures/rail_segments/straight.png'),
     orientation: Orientation.TO_TOP,
-    size: new Size(90, 130)
+    size: new Size(65, 130)
 }
 
-Segment.FromTopToRight = {
-    name: 'from top to right',
-    texture: new Texture('./assets/textures/rail_segments/from_top_to_right.png'),
+Segment.FromTopToLeft = {
+    name: 'from top to left',
+    texture: new Texture('./assets/textures/rail_segments/from_top_to_left.png'),
     orientation: Orientation.FROM_TOP_TO_RIGHT,
     size: new Size(90, 90)
 }
 
-Segment.StraightLeftToRight = {
-    name: 'straight horizontal to right',
+Segment.StraightHorizontal = {
+    name: 'straight horizontal',
     texture: new Texture('./assets/textures/rail_segments/straight_horizontal.png'),
     orientation: Orientation.FROM_LEFT_TO_RIGHT,
-    size: new Size(230, 90)
-}
-
-Segment.StraightRightToLeft = {
-    name: 'straight horizontal to left',
-    texture: new Texture('./assets/textures/rail_segments/straight_horizontal.png'),
-    orientation: Orientation.FROM_RIGHT_TO_LEFT,
-    size: new Size(230, 90)
+    size: new Size(130, 65)
 }
 
 Segment.FromLeftToBottom = {
@@ -460,44 +390,24 @@ Segment.FromBottomToRight = {
     size: new Size(90, 90)
 }
 
-Segment.FromLeftToBottom = {
-    name: 'from left to bottom',
-    texture: new Texture('./assets/textures/rail_segments/from_left_to_bottom.png'),
-    orientation: Orientation.FROM_LEFT_TO_BOTTOM,
-    size: new Size(90, 90)
-}
-
-Segment.FromTopToLeft = {
-    name: 'from top to left',
-    texture: new Texture('./assets/textures/rail_segments/from_left_to_top.png'),
-    orientation: Orientation.FROM_TOP_TO_LEFT,
-    size: new Size(90, 90)
-}
-
-Segment.FromRightToTop = {
-    name: 'from right to top',
-    texture: new Texture('./assets/textures/rail_segments/from_top_to_right.png'),
-    orientation: Orientation.FROM_RIGHT_TO_TOP,
-    size: new Size(90, 90)
-}
-
 function main() {
     const rail = new Rail(0, 0, window.innerWidth, window.innerHeight * 4);
     rail.setParent(document.body);
     
     rail.addSegment(Segment.Straight);
     rail.addSegment(Segment.Straight);
-
-    rail.addSegment(Segment.FromBottomToRight);
-    rail.addSegment(Segment.StraightLeftToRight);
-    rail.addSegment(Segment.FromLeftToBottom);
-    rail.addSegment(Segment.Straight);
     rail.addSegment(Segment.FromTopToLeft);
-    rail.addSegment(Segment.StraightRightToLeft);
-    rail.addSegment(Segment.FromRightToTop);
+    rail.addSegment(Segment.FromLeftToTop);
     rail.addSegment(Segment.StraightToTop);
+    rail.addSegment(Segment.FromBottomToRight);
+
+    // rail.addSegment(Segment.StraightHorizontal);
+    // rail.addSegment(Segment.FromLeftToBottom);
+    // rail.addSegment(Segment.FromTopToLeft);
+    // rail.addSegment(Segment.StraightHorizontal);
+
     
-    const train = new Train(new Size(90, 170), new Pos(0, 0));
+    const train = new Train(new Size(65, 130), new Pos(0, 0));
     train.setRail(rail);
 
     const loop = () => {
@@ -512,5 +422,6 @@ function main() {
     
     window.requestAnimationFrame(loop);
 }
+
 
 window.onload = main;
