@@ -1,4 +1,16 @@
+let NUM = 0;
+let AFTER = null;
+
 const cw = console.log;
+const stop = (after, msg) => {
+    if(after && AFTER == null)
+        AFTER = after;
+
+    if(!after || NUM++ == after) {
+        cw(msg);
+        throw new Error('BREAKPOINT');
+    }
+}
 
 class Size {
     constructor(width, height) {
@@ -15,10 +27,10 @@ class Size {
         return this;
     }
 
-    invert() {
-        let h = this.height;
-        this.height = this.width;
-        this.width = h;
+    invert = () => [this.height, this.width] = [this.width, this.height];
+    multipy(vector) {
+        this.width = Math.round(vector.x * this.width);
+        this.height = Math.round(vector.y * this.height);
         return this;
     }
 }
@@ -29,6 +41,14 @@ Size.Add = (...arguments) => {
     return size;
 }
 
+Size.Multipy = (...arguments) => {
+    const size = arguments.shift();
+    arguments.forEach(arg => size.multipy(arg));
+    return size;
+}
+
+Size.Invert = s => new Size(s.height, s.width);
+
 class Vector {
     constructor(x, y) {
         this.x = x;
@@ -38,6 +58,12 @@ class Vector {
     add(vector) {
         this.x += vector.x;
         this.y += vector.y;
+        return this;
+    }
+
+    multipy(vector) {
+        this.x = Math.round(vector.x * this.x);
+        this.y = Math.round(vector.y * this.y);
         return this;
     }
 }
@@ -72,22 +98,33 @@ Pos.Add = (...arguments) => {
     return pos;
 }
 
+Pos.Multipy = (...arguments) => {
+    const pos = arguments.shift();
+    arguments.forEach(arg => pos.multipy(arg));
+    return pos;
+}
+
 Pos.Dist = (pos1, pos2) => Math.abs(pos1.x - pos2.x) + Math.abs(pos1.y - pos2.y);
 
-class Map {
+class Range {
+    constructor(min, max) {
+        this.min = min;
+        this.max = max; 
+    }
+
+    Overlaps = range => (((range.x > this.min.x) && (range.y > this.min.y)) && ((range.x <= this.max.x) && (range.y <= this.max.y)));
+}
+
+class LinearMap {
     constructor() {
         this.items = [];
     }
 
-    set = (from, to, value) => this.items.push({ from, to, value });
-    get = pos => {
-        for(const item of this.items) {
-            if(pos.IsWithin(item.from, item.to))
-                return item;
-        }
-    }
+    set = (range, value) => this.items.push({ range, value });
+    
+    get = range => this.items.filter(v => v.range.Overlaps(range)).map(v => v.value);
 
-    free = () => this.items = [];
+    // free = pos => delete this.items[`@${pos.x}_${pos.y}`];
 }
 
 class Texture extends Image {
@@ -145,31 +182,34 @@ class Rail extends Canvas {
         this.pos = new Pos(x, y);
         this.size = new Size(width, height);
         this.segments = [];
-        this.segmentMap = new Map();
+        this.segmentMap = new LinearMap();
     }
 
     addSegment(type) {
         let prev = this.segments[this.segments.length - 1];
-        let prev_prev = this.segments[this.segments.length - 2];
-        let pos = new Pos(0, 0);
-        
+        let pos = new Pos((prev?.pos?.x || 0), (prev?.pos?.y || 0));
+
         if(prev) {
-            if(prev.type.orientation == 0)
-                pos.add(new Pos(0, prev.pos.y + prev.size.height));
-            else {
-                pos.add(new Pos(prev.pos.x + prev.size.width, 0));
-                pos.add(new Pos(0, prev_prev.pos.y + prev_prev.size.height));
+            switch(prev.type.orientation) {
+                case 0:
+                    pos.add(new Size(0, prev.size.height));
+                    break;
+                
+                case 1:
+                case 2:
+                case 4:
+                    pos.add(new Size(prev.size.width, 0));
+                    break;
+
+                default:
+                    throw new Error('OwO');
             }
         }
         
         const segment = new Segment(type, pos);
         segment.rail = this;
 
-        if(segment.type.orientation == 0)
-            this.segmentMap.set(pos, Pos.Add(pos, this.size), segment);
-        else
-            this.segmentMap.set(pos, Pos.Add(pos, this.size), segment);
-
+        this.segmentMap.set(new Range(pos, Pos.Add(pos, segment.size)), segment);
         this.segments.push(segment);
     }
 
@@ -181,6 +221,15 @@ class Rail extends Canvas {
 
 class Train {
     constructor(size, pos) {
+        this.orientations = {
+            TO_BOTTOM: 0,
+            TO_LEFT: 1,
+            TO_RIGHT: 2,
+            TO_BOTTOM_LEFT: 3,
+            TO_BOTTOM_RIGHT: 4
+        }
+
+        this.ditanceTraveled = 0;
         this.pos = pos;
         this.size = size;
         this.inverted = false;
@@ -191,55 +240,66 @@ class Train {
             horizontal: new Texture('./assets/textures/trains/old_verical_to_right.png', new Size(size.height, size.width))
         }
         
+        this.brake = false;
         this.orientation = 0;
+        this.prevSeg = null;
     }
     
-    //(new Pos(0, 0)).add(this.pos).add((new Size(0, 0)).add(this.size))
-
     setRail = rail => this.rail = rail;
 
-    move(v, v2) {
-        // let p = new Pos(0, 0);
-        
-        // if(this.pos == p)
-        //     p = (new Pos(0, 0)).add(this.size).add(this.pos);
-        Pos.Add(this.pos, new Pos(Math.floor(this.pos.width * 0.5), Math.floor(this.pos.height * 0.5)));
-        const segment = this.rail.segmentMap.get(this.pos);
+    move(v) {
+        let segment = this.rail.segmentMap.get(Pos.Add(this.pos, new Size(this.size.width / 2, this.size.height)));
+        segment = segment.at(-1);
+
+        if(this.brake)
+            return;
+
+        if(segment && segment !== this.prevSeg && (['straight_horizontal'].indexOf(segment.type.name) == -1)) {
+            this.pos = Pos.Add(segment.pos);
+            // && ([ 3 ][segment.type.orientation] === undefined)
+            this.prevSeg = segment; 
+        }
+
+
+        // stop(45, [ segment, this.rail.segmentMap, this.pos ]);
 
         if(segment)
             this.onSegment = segment;
 
-        this.orientation = segment?.type?.orientation || this.orientation;
+        if(segment?.type?.orientation !== undefined)
+            this.orientation = segment?.type?.orientation;
 
         ([
             () => this.pos.add(new Pos(0, v)), //TO BOTTOM
             () => this.pos.add(new Pos(v * -1, 0)), //TO LEFT
-            () => { //TO RIGHT
-                this.pos.add(new Pos(v * 1, 0));
-            }, 
-            () => this.pos.add(new Pos(v, v2)), //TO BOTTOM LEFT
-            () => this.pos.add(new Pos(v * -1, v2 * -1)) //TO BOTTOM RIGHT
+            () => this.pos.add(new Pos(v * 1, 0)), //TO RIGHT
+            () => this.pos.add(new Pos(v, v)), //TO BOTTOM LEFT
+            () => this.pos.add(new Pos(v, 0))//TO BOTTOM RIGHT
         ][this.orientation])();
+
+        if(this.rail.segments.indexOf(segment) == this.rail.segments.length-1)
+            this.brake = true;
+
+        this.ditanceTraveled += Math.sign(v);
     }
 
     render() {
         if(!this.rail)
             throw new Error('Rail object not set.');
 
-        const texture = this.orientation === 0 ? this.textures.vertical : this.textures.horizontal;
-        
-        if(this.orientation === 0 && !this.inverted) {
+        const texture = (this.orientation === this.orientations.TO_BOTTOM) ? this.textures.vertical : this.textures.horizontal;
+
+        if((this.orientation === this.orientations.TO_BOTTOM) && !this.inverted) {
         	this.inverted = true;
         	this.size.invert();
-        	
+            
         	this.rail.drawTexture(texture, this.pos.x, this.pos.y, this.size.width, this.size.height);
         } else {
-        	
-        	if(this.inverted && this.orientation !== 0) {
+        	if(this.inverted && this.orientation !== this.orientations.TO_BOTTOM) {
         		this.size.invert();
         		this.inverted = false;
         	}
-        	
+
         	this.rail.drawTexture(texture, this.pos.x, this.pos.y, this.size.height, this.size.width);
         }
     }
@@ -257,45 +317,69 @@ Segment.straight = {
     name: 'straight',
     texture: new Texture('./assets/textures/rail_segments/straight.png'),
     orientation: Train.Orientation.TO_BOTTOM,
-    size: new Size(150, 300)
+    size: new Size(65, 130)
 }
 
 Segment.straight_horizontal = {
     name: 'straight_horizontal',
     texture: new Texture('./assets/textures/rail_segments/straight_horizontal.png'),
     orientation: Train.Orientation.TO_RIGHT,
-    size: new Size(300, 150)
+    size: Size.Invert(Segment.straight.size)
 }
 
 Segment.to_right_90_deg = {
     name: 'to_right_90_deg',
     texture: new Texture('./assets/textures/rail_segments/90_deg_to_right.png'),
-    orientation: Train.Orientation.TO_RIGHT,
-    size: new Size(150, 150)
+    orientation: Train.Orientation.TO_BOTTOM_RIGHT, //TO_RIGHT
+    size: new Size(Segment.straight.size.width, Segment.straight.size.width)
 }
 
-function main() {
-    const rail = new Rail(0, 0, 800, 1200);
-    rail.setParent(document.body);
-    
+Segment.from_left_90_deg = {
+    name: 'from_left_90_deg',
+    texture: new Texture('./assets/textures/rail_segments/90_deg_from_left.png'),
+    orientation: Train.Orientation.TO_BOTTOM,
+    size: new Size(Segment.straight.size.width, Segment.straight.size.width)
+}
+
+const rail = new Rail(0, 0, window.innerWidth, window.innerHeight * 4);
+rail.setParent(document.body);
+
+
+
+
+
+
+const createSegments = () => {
+    rail.addSegment(Segment.straight);
     rail.addSegment(Segment.straight);
     rail.addSegment(Segment.to_right_90_deg);
     rail.addSegment(Segment.straight_horizontal);
-    cw(rail.segmentMap);
-    // rail.addSegment(Segment.straight);
+    rail.addSegment(Segment.straight_horizontal);
+    rail.addSegment(Segment.straight_horizontal);
+    rail.addSegment(Segment.from_left_90_deg);
+    rail.addSegment(Segment.straight);
+    rail.addSegment(Segment.to_right_90_deg);
+    rail.addSegment(Segment.straight_horizontal);
+    rail.addSegment(Segment.from_left_90_deg);
+    rail.addSegment(Segment.straight);
+}
 
-    const train = new Train(new Size(150, 300), new Pos(0, 0));
+createSegments();
+
+
+window.onload = () => {
+    const train = new Train(Size.Add(Segment.straight.size), new Pos(0, 0));
     train.setRail(rail);
-
+    
     const loop = () => {
-        train.move(3);
+        train.move(10);
+
         rail.clear();
         rail.render();
         train.render();
+
         window.requestAnimationFrame(loop);
     }
 
     window.requestAnimationFrame(loop);
 }
-
-window.onload = main;
