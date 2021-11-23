@@ -1,8 +1,8 @@
 # GreenTrain
 
-##Ideas
+## Ideas
 -create a train animation on scroll
 
-##TODO
+## TODO
 -add tunnels and scenary
 -add scroll parlalax effect
