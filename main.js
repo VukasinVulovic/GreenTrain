@@ -1,6 +1,8 @@
 let NUM = 0;
 let AFTER = null;
 
+const IS_DEV = true;
+
 const cw = console.log;
 const stop = (after, msg) => {
     if(after && AFTER == null)
@@ -11,6 +13,24 @@ const stop = (after, msg) => {
         throw new Error('BREAKPOINT');
     }
 }
+
+const displayFrame = () => {
+    let element = document.querySelector('#FrameCounter');
+
+    if(!element) {
+        element = document.createElement('h1');
+        element.style = 'font-size: 38pt; color: red; position: absolute; top: 0; right: 30px;';
+        element.id = 'FrameCounter';
+        document.body.appendChild(element);
+    }
+
+    if(!window.frame_index)
+        window.frame_index = 0;
+
+    element.innerHTML = 'Frame: ' + window.frame_index++;
+}
+
+
 
 class Size {
     constructor(width, height) {
@@ -156,10 +176,25 @@ class Canvas {
 
     clear = () => this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     setParent = parent => parent.appendChild(this.canvas);
-    drawTexture(texture, x, y, width, height) {
+
+    drawTexture(texture, x, y, rot_deg, width, height) {
         const pos = new Pos(x, y);
-        pos.add(new Pos(-0.5 * width, -0.5 * height)); //set position to center
-        this.ctx.drawImage(texture, pos.x, pos.y, width, height);
+        // this.posPoint('red', pos.x, pos.y);
+
+        if(rot_deg !== 0) { //if rotation is needed
+            this.ctx.save();
+    
+            this.ctx.setTransform(1, 0, 0, 1, pos.x, pos.y); //set transform to 2d
+            this.ctx.rotate(rot_deg * (Math.PI / 180)); //convert degrees to radians and rotate canvas
+    
+            this.ctx.drawImage(texture, -width * 0.5, -height * 0.5, width, height); //draw on canvas
+    
+            this.ctx.restore(); //return to defaults
+            this.ctx.resetTransform();
+        } else {
+            pos.add(new Pos(-0.5 * width, -0.5 * height)); //set position to center
+            this.ctx.drawImage(texture, pos.x, pos.y, width, height);
+        }
     }
 
     posPoint(color, x, y) {
@@ -180,7 +215,8 @@ const Orientation = {
     FROM_LEFT_TO_BOTTOM: 7,
     FROM_TOP_TO_LEFT: 8,
     FROM_RIGHT_TO_TOP: 9,
-    FROM_RIGHT_TO_LEFT: 10
+    FROM_RIGHT_TO_LEFT: 10,
+    FROM_RIGHT_TO_BOTTOM: 11
 }
 
 class Segment {
@@ -196,7 +232,7 @@ class Segment {
         if(!this.rail)
             throw new Error('Rail object not set.');
 
-        this.rail.drawTexture(this.type.texture, this.pos.x, this.pos.y, this.size.width, this.size.height);
+        this.rail.drawTexture(this.type.texture, this.pos.x, this.pos.y, 0, this.size.width, this.size.height);
     }
 }
 
@@ -218,6 +254,7 @@ class Rail extends Canvas {
             switch(prev.orientation) { //set offset based on previous segment's rotation
                 case Orientation.TO_BOTTOM:
                 case Orientation.FROM_LEFT_TO_BOTTOM:
+                case Orientation.FROM_RIGHT_TO_BOTTOM:
                     pos.add(new Pos(0, (prev.size.height + type.size.height) * 0.5));
                     break;
 
@@ -244,15 +281,8 @@ class Rail extends Canvas {
         
         const segment = new Segment(type, pos);
         segment.rail = this; //set rail
-        this.posPoint('orange', pos.x, pos.y);
-
-        const min = Pos.Add(pos, new Pos(type.size.width * -0.5, type.size.height * -0.5));
-        const max = Pos.Add(pos, new Pos(type.size.width * 0.5, type.size.height * 0.5));
-
-        this.posPoint('red', min.x, min.y);
-        this.posPoint('blue', max.x, max.y);
         
-        const range = new Range(min, max); //set range (min pos, max pos) (train top)
+        const range = new Range(pos, pos); //set range (min pos, max pos) (train top)
         this.segment_map.set(range, segment); //add segment to linear map
         this.segments.push(segment); //add segment to list
     }
@@ -272,18 +302,11 @@ class Train {
         this.rail = null;
         this.on_segment = null;
         this.textures = {
-            old: {
-                vertical: new Texture('./assets/textures/trains/old.png', size),
-                horizontal_to_right: new Texture('./assets/textures/trains/old_horizontal_to_right.png', new Size(size.height, size.width)),
-                horizontal_from_left: new Texture('./assets/textures/trains/old_horizontal_from_left.png', new Size(size.height, size.width)),
-                vertical_to_top: new Texture('./assets/textures/trains/old_to_top.png', size)
-            }
+            old: new Texture('./assets/textures/trains/old.png', size)
         }
         
-        this.texture = this.textures.old.vertical;
+        this.texture = this.textures.old;
         this.orientation = Orientation.TO_BOTTOM;
-        this.prev_segment = null;
-        this.size_inverted = false;
     }
     
     setRail(rail) {
@@ -294,43 +317,43 @@ class Train {
 
     move(v) {
         const segment = this.rail.segment_map.get(this.pos).at(-1); //get segemnts of current position
-        // cw(segment);
 
-        this.rail.posPoint('red', this.pos.x, this.pos.y);
+        if(this.rail?.segments?.at(-1) == segment)
+            return;
 
-        if(segment && segment !== this.prev_segment) //if segment not chaged or no segment
+        if(segment) //if segment not chaged or no segment
             this.on_segment = segment;
-
-        this.prev_segment = segment;
 
         if(this.on_segment) { //if train is on segment
             switch(this.on_segment.orientation) { //set offset based on previous segment's rotation
                 case Orientation.TO_BOTTOM:
                 case Orientation.FROM_LEFT_TO_BOTTOM:
+                case Orientation.FROM_RIGHT_TO_BOTTOM:
                     this.pos.add(new Pos(0, v));
                     break;
     
                 case Orientation.FROM_TOP_TO_RIGHT:
                 case Orientation.FROM_LEFT_TO_RIGHT:
-                    this.pos.add(new Pos(v, 0));
+                    this.pos.add(new Pos(v, 0));                        
                     break;
     
-                // case Orientation.FROM_TOP_TO_LEFT:
-                //     break;
+                case Orientation.FROM_TOP_TO_LEFT:
+                case Orientation.FROM_RIGHT_TO_LEFT:
+                    this.pos.add(new Pos(v * -1, 0));
+                    break;
     
-                // case Orientation.FROM_RIGHT_TO_LEFT:
-                //     break;
-    
-                // case Orientation.FROM_RIGHT_TO_TOP:
-                //     break;
-    
-                // case Orientation.TO_TOP:
-                //     break;
+                case Orientation.FROM_RIGHT_TO_TOP:
+                case Orientation.TO_TOP:
+                    this.pos.add(new Pos(0, v * -1));
+                    break;
 
                 default:
                     throw new Error('Unknown orientation: ' + this.on_segment.orientation);
             }
+
+            this.orientation = this.on_segment.orientation;
         }
+
         this.ditance_traveled += Math.sign(v); //add to distance
     }
 
@@ -338,7 +361,26 @@ class Train {
         if(!this.rail)
             throw new Error('Rail object not set.');
 
-        this.rail.drawTexture(this.texture, this.pos.x, this.pos.y, this.size.width, this.size.height); //render train texture
+        let rotated = 0;
+
+        switch(this.orientation) { //set rotation based on train rotation
+            case Orientation.FROM_TOP_TO_RIGHT:
+            case Orientation.FROM_LEFT_TO_RIGHT:
+                rotated = -90;
+                break;
+
+            case Orientation.FROM_TOP_TO_LEFT:
+            case Orientation.FROM_RIGHT_TO_LEFT:
+                rotated = 90;
+                break;
+
+            case Orientation.FROM_RIGHT_TO_TOP:
+            case Orientation.TO_TOP:
+                rotated = 180;
+                break;
+        }
+
+        this.rail.drawTexture(this.texture, this.pos.x, this.pos.y, rotated, this.size.width, this.size.height);
     }
 }
 
@@ -419,6 +461,13 @@ Segment.FromRightToTop = {
     size: new Size(90, 90)
 }
 
+Segment.FromRightToBottom = {
+    name: 'from right to bottom',
+    texture: new Texture('./assets/textures/rail_segments/from_bottom_to_right.png'),
+    orientation: Orientation.FROM_RIGHT_TO_BOTTOM,
+    size: new Size(90, 90)
+}
+
 function main() {
     const rail = new Rail(0, 0, window.innerWidth, window.innerHeight * 4);
     rail.setParent(document.body);
@@ -436,20 +485,47 @@ function main() {
     rail.addSegment(Segment.FromRightToTop);
     rail.addSegment(Segment.StraightToTop);
 
+    // rail.addSegment(Segment.FromTopToRight);
+    // rail.addSegment(Segment.StraightLeftToRight);
+    // rail.addSegment(Segment.StraightLeftToRight);
+    // rail.addSegment(Segment.StraightLeftToRight);
+    // rail.addSegment(Segment.StraightLeftToRight);
+    // rail.addSegment(Segment.StraightLeftToRight);
+    // rail.addSegment(Segment.FromLeftToBottom);
+    // rail.addSegment(Segment.Straight);
+    // rail.addSegment(Segment.Straight);
+    // rail.addSegment(Segment.FromTopToLeft);
+    // rail.addSegment(Segment.StraightRightToLeft);
+    // rail.addSegment(Segment.StraightRightToLeft);
+    // rail.addSegment(Segment.StraightRightToLeft);
+    // rail.addSegment(Segment.StraightRightToLeft);
+    // rail.addSegment(Segment.StraightRightToLeft);
+    // rail.addSegment(Segment.FromRightToBottom);
+    // rail.addSegment(Segment.StraightToTop);
+
+
     const train = new Train(new Size(90, 170));
     train.setRail(rail);
-
+    
     const loop = () => {
         train.move(10);
     
         rail.clear();
         rail.render();
-        // train.render();
+        train.render();
         
         window.requestAnimationFrame(loop);
     }
-    
+
     window.requestAnimationFrame(loop);
+
+    // window.addEventListener('keydown', e => {
+    //     if(e.keyCode === 39) {
+    //         loop();
+    //         displayFrame();
+    //     }
+    // });
+    
 }
 
 window.onload = main;
