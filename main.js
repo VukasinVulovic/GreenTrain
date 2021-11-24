@@ -1,8 +1,6 @@
 let NUM = 0;
 let AFTER = null;
 
-const IS_DEV = true;
-
 const cw = console.log;
 const stop = (after, msg) => {
     if(after && AFTER == null)
@@ -14,23 +12,18 @@ const stop = (after, msg) => {
     }
 }
 
-const displayFrame = () => {
-    let element = document.querySelector('#FrameCounter');
 
-    if(!element) {
-        element = document.createElement('h1');
-        element.style = 'font-size: 38pt; color: red; position: absolute; top: 0; right: 30px;';
-        element.id = 'FrameCounter';
-        document.body.appendChild(element);
-    }
+Math.clamp = (value, min, max) => {
+    if(value < min)
+        value = min;
 
-    if(!window.frame_index)
-        window.frame_index = 0;
+    if(value > max)
+        value = max;
 
-    element.innerHTML = 'Frame: ' + window.frame_index++;
+    return value;
 }
 
-
+Math.map = (value, imin, imax, omin, omax) => Math.clamp(((value - imin) * (omax - omin) / (imax - imin) + omin), omin, omax);
 
 class Size {
     constructor(width, height) {
@@ -119,7 +112,7 @@ Pos.Add = (...arguments) => {
 }
 
 Pos.Multipy = (...arguments) => {
-    const pos = arguments.shift();
+    const pos = Pos.Add(arguments.shift());
     arguments.forEach(arg => pos.multipy(arg));
     return pos;
 }
@@ -226,6 +219,7 @@ class Segment {
         this.size = this.type.size;
         this.pos = pos;
         this.orientation = type.orientation;
+        this.hide_train = !!type.hide_train;
     }
 
     render() {
@@ -241,8 +235,8 @@ class Rail extends Canvas {
         super(x, y, width, height); //create canvas (call constructor of Canvas)
         this.pos = new Pos(x, y);
         this.size = new Size(width, height);
-        this.segments = [];
         this.segment_map = new LinearMap();
+        this.segments = [];
     }
 
     addSegment(type) {
@@ -301,12 +295,14 @@ class Train {
         this.inverted = false;
         this.rail = null;
         this.on_segment = null;
+        this.prev_segment = null;
         this.textures = {
             old: new Texture('./assets/textures/trains/old.png', size)
         }
         
         this.texture = this.textures.old;
         this.orientation = Orientation.TO_BOTTOM;
+        this.prev_rotated = 0;
     }
     
     setRail(rail) {
@@ -315,14 +311,13 @@ class Train {
         this.on_segment = rail?.segments[0];
     }
 
-    move(v) {
+    move(v) {        
         const segment = this.rail.segment_map.get(this.pos).at(-1); //get segemnts of current position
 
-        if(this.rail?.segments?.at(-1) == segment)
+        if(this.rail?.segments?.at(-1) == segment) //if last segment, don't move
             return;
 
-        if(segment) //if segment not chaged or no segment
-            this.on_segment = segment;
+        this.on_segment = segment ? segment : this.on_segment; //if segment not chaged or no segment
 
         if(this.on_segment) { //if train is on segment
             switch(this.on_segment.orientation) { //set offset based on previous segment's rotation
@@ -357,30 +352,52 @@ class Train {
         this.ditance_traveled += Math.sign(v); //add to distance
     }
 
+    calcDiff(curr_angle, to, dir) {
+        const diff = (Math.abs(this.on_segment.pos.x - this.pos.x) + Math.abs(this.on_segment.pos.y - this.pos.y));
+        return (Math.floor(Math.map(diff, curr_angle, this.on_segment.size.width, curr_angle, to))) * dir;
+    }
+
     render() {
         if(!this.rail)
             throw new Error('Rail object not set.');
 
-        let rotated = 0;
+        let rotation = 0;
 
         switch(this.orientation) { //set rotation based on train rotation
+            case Orientation.FROM_LEFT_TO_BOTTOM:
+                rotation = this.calcDiff(-90, 0, 1);
+                break;
+
+            case Orientation.FROM_RIGHT_TO_BOTTOM:
+                rotation = this.calcDiff(-90, 0, -1);
+                break;
+
             case Orientation.FROM_TOP_TO_RIGHT:
+                rotation = this.calcDiff(-90, 90, -1);
+                break;
+
             case Orientation.FROM_LEFT_TO_RIGHT:
-                rotated = -90;
+                rotation = -90;
                 break;
 
             case Orientation.FROM_TOP_TO_LEFT:
+                rotation = this.calcDiff(-90, 90, 1);
+                break;
+
             case Orientation.FROM_RIGHT_TO_LEFT:
-                rotated = 90;
+                rotation = 90;
                 break;
 
             case Orientation.FROM_RIGHT_TO_TOP:
+                rotation = this.calcDiff(-360, 180, 1);
+                break;
+
             case Orientation.TO_TOP:
-                rotated = 180;
+                rotation = 180;
                 break;
         }
 
-        this.rail.drawTexture(this.texture, this.pos.x, this.pos.y, rotated, this.size.width, this.size.height);
+        this.rail.drawTexture(this.texture, this.pos.x, this.pos.y, rotation, this.size.width, this.size.height);
     }
 }
 
@@ -468,11 +485,18 @@ Segment.FromRightToBottom = {
     size: new Size(90, 90)
 }
 
+Segment.Tunnel = {
+    name: 'tunnel',
+    texture: new Texture('./assets/textures/rail_segments/tunnel_straight.png'),
+    orientation: Orientation.TO_BOTTOM,
+    size: new Size(90, 130),
+    hide_train: true
+}
+
 function main() {
     const rail = new Rail(0, 0, window.innerWidth, window.innerHeight * 4);
     rail.setParent(document.body);
-    
-    rail.addSegment(Segment.Straight);
+
     rail.addSegment(Segment.Straight);
     rail.addSegment(Segment.FromTopToRight);
     rail.addSegment(Segment.StraightLeftToRight);
@@ -485,47 +509,30 @@ function main() {
     rail.addSegment(Segment.FromRightToTop);
     rail.addSegment(Segment.StraightToTop);
 
-    // rail.addSegment(Segment.FromTopToRight);
-    // rail.addSegment(Segment.StraightLeftToRight);
-    // rail.addSegment(Segment.StraightLeftToRight);
-    // rail.addSegment(Segment.StraightLeftToRight);
-    // rail.addSegment(Segment.StraightLeftToRight);
-    // rail.addSegment(Segment.StraightLeftToRight);
-    // rail.addSegment(Segment.FromLeftToBottom);
-    // rail.addSegment(Segment.Straight);
-    // rail.addSegment(Segment.Straight);
-    // rail.addSegment(Segment.FromTopToLeft);
-    // rail.addSegment(Segment.StraightRightToLeft);
-    // rail.addSegment(Segment.StraightRightToLeft);
-    // rail.addSegment(Segment.StraightRightToLeft);
-    // rail.addSegment(Segment.StraightRightToLeft);
-    // rail.addSegment(Segment.StraightRightToLeft);
-    // rail.addSegment(Segment.FromRightToBottom);
-    // rail.addSegment(Segment.StraightToTop);
-
-
     const train = new Train(new Size(90, 170));
     train.setRail(rail);
     
-    const loop = () => {
+    rail.clear();
+    rail.render();
+    train.render();
+
+    window.addEventListener('wheel', e => {
+        if(e.deltaY < 0)
+            return;
+
         train.move(10);
     
         rail.clear();
         rail.render();
         train.render();
-        
-        window.requestAnimationFrame(loop);
-    }
+    });
 
-    window.requestAnimationFrame(loop);
+    // const loop = () => {
 
-    // window.addEventListener('keydown', e => {
-    //     if(e.keyCode === 39) {
-    //         loop();
-    //         displayFrame();
-    //     }
-    // });
-    
+    //     window.requestAnimationFrame(loop);
+    // }
+
+    // window.requestAnimationFrame(loop);
 }
 
 window.onload = main;
